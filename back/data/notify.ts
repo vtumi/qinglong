@@ -117,6 +117,7 @@ export class EmailNotification extends NotificationBaseInfo {
   public emailService: string = '';
   public emailUser: string = '';
   public emailPass: string = '';
+  public emailFrom: string = '';
   public emailTo: string = '';
 }
 
