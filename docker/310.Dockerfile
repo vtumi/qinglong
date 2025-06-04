@@ -1,7 +1,7 @@
 FROM node:22-slim AS nodebuilder
 
 FROM python:3.10-slim-bookworm AS builder
-COPY package.json .npmrc pnpm-lock.yaml /tmp/build/
+COPY . /tmp/build
 COPY --from=nodebuilder /usr/local/bin/node /usr/local/bin/
 COPY --from=nodebuilder /usr/local/lib/node_modules/. /usr/local/lib/node_modules/
 RUN set -x && \
@@ -10,7 +10,9 @@ RUN set -x && \
   apt-get install --no-install-recommends -y libatomic1 && \
   npm i -g pnpm@8.3.1 && \
   cd /tmp/build && \
-  pnpm install --prod
+  pnpm --registry https://registry.npmmirror.com install && \
+  pnpm run build:front && \
+  pnpm run build:back
 
 FROM python:3.10-slim-bookworm
 
@@ -28,6 +30,9 @@ ENV QL_DIR=/ql \
 
 COPY --from=nodebuilder /usr/local/bin/node /usr/local/bin/
 COPY --from=nodebuilder /usr/local/lib/node_modules/. /usr/local/lib/node_modules/
+COPY . ${QL_DIR}
+
+WORKDIR ${QL_DIR}
 
 RUN set -x && \
   ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
@@ -52,22 +57,13 @@ RUN set -x && \
   git config --global user.email "qinglong@users.noreply.github.com" && \
   git config --global user.name "qinglong" && \
   git config --global http.postBuffer 524288000 && \
-  npm install -g pnpm@8.3.1 pm2 ts-node && \
+  npm install -g pnpm@8.3.1 pm2 tsx && \
+  pnpm config set registry https://registry.npmmirror.com && \
+  pnpm install --prod && \
   rm -rf /root/.cache && \
   rm -rf /root/.npm && \
   rm -rf /etc/apt/apt.conf.d/docker-clean && \
   ulimit -c 0
-
-ARG SOURCE_COMMIT
-RUN git clone --depth=1 -b ${QL_BRANCH} ${QL_URL} ${QL_DIR} && \
-  cd ${QL_DIR} && \
-  cp -f .env.example .env && \
-  chmod 777 ${QL_DIR}/shell/*.sh && \
-  chmod 777 ${QL_DIR}/docker/*.sh && \
-  git clone --depth=1 -b ${QL_BRANCH} https://github.com/${QL_MAINTAINER}/qinglong-static.git /static && \
-  mkdir -p ${QL_DIR}/static && \
-  cp -rf /static/* ${QL_DIR}/static && \
-  rm -rf /static
 
 ENV PNPM_HOME=${QL_DIR}/data/dep_cache/node \
   PYTHON_HOME=${QL_DIR}/data/dep_cache/python3 \
@@ -80,9 +76,12 @@ ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PNPM_HOM
 
 RUN pip3 install --prefix ${PYTHON_HOME} requests
 
-COPY --from=builder /tmp/build/node_modules/. /ql/node_modules/
+RUN cp -f .env.example .env && \
+  chmod +x ${QL_DIR}/shell/*.sh && \
+  chmod +x ${QL_DIR}/docker/*.sh && \
+  mkdir -p ${QL_DIR}/static
 
-WORKDIR ${QL_DIR}
+COPY --from=builder /tmp/build/static ${QL_DIR}/static
 
 HEALTHCHECK --interval=5s --timeout=2s --retries=20 \
   CMD curl -sf --noproxy '*' http://127.0.0.1:5600/api/health || exit 1
